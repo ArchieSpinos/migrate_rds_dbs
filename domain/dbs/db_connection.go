@@ -25,6 +25,6 @@ func SourceInitConnection(dbcon ReplRequest) (*sql.DB, error) {
 		//log(err)
 		return nil, err
 	}
-	log.Println("database successfully configured")
+	log.Println("database connection successfully configured")
 	return appDB, nil
 }
