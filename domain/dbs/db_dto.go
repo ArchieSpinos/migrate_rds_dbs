@@ -7,12 +7,13 @@ type DbConnection struct {
 	Host     string `json:"db_host"`
 }
 
-type ReplRequest struct {
-	SourceName      string `json:"source_db_name"`
+type ReplicationRequest struct {
 	SourceUser      string `json:"source_db_user"`
 	SourcePassword  string `json:"source_db_password"`
 	SourceHost      string `json:"source_db_host"`
 	SourceClusterID string `json:"source_cluster_id"`
+	SourceDBName    string `json:"source_db_name"`
+	MysqlDumpPath   string `json:"mysql_dump_path"`
 	DestName        string `json:"dest_db_name"`
 	DestUser        string `json:"dest_db_user"`
 	DestPassword    string `json:"dest_db_password"`

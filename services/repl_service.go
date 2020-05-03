@@ -2,6 +2,10 @@ package services
 
 import (
 	"fmt"
+	"strings"
+	"time"
+
+	"github.com/aws/aws-sdk-go/aws"
 
 	"github.com/ArchieSpinos/migrate_rds_dbs/domain/dbs"
 	"github.com/ArchieSpinos/migrate_rds_dbs/utils/errors"
@@ -9,19 +13,28 @@ import (
 	"github.com/aws/aws-sdk-go/service/rds"
 )
 
-func EnableBinLogRetention(dbconn dbs.ReplRequest) (*dbs.QueryResult, *errors.DBErr) {
+func EnableBinLogRetention(request dbs.ReplicationRequest) (*dbs.QueryResult, *errors.DBErr) {
 	//var queries = []string{"CALL mysql.rds_set_configuration('binlog retention hours', 144);", "CALL mysql.rds_show_configuration;"}
 	//var query = "CALL mysql.rds_set_configuration('binlog retention hours', 144);"
 	var query = "show databases;"
 	//var query = "CALL mysql.rds_show_configuration;"
 	result := &dbs.QueryResult{}
-	if err := result.MultiQueryLogRetention(dbconn, query); err != nil {
+	if err := result.MultiQuery(request, query); err != nil {
 		return nil, err
 	}
 	return result, nil
 }
 
-func RDSDescribeToStruct(replReq dbs.ReplRequest, dscrOutput *rds.DescribeDBClustersOutput) rds.RestoreDBClusterToPointInTimeInput {
+func CreateDestDatabase(request dbs.ReplicationRequest) (*dbs.QueryResult, *errors.DBErr) {
+	var query = fmt.Sprintf("create database %s;", request.SourceDBName)
+	result := &dbs.QueryResult{}
+	if err := result.MultiQuery(request, query); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func RDSDescribeToStruct(replReq dbs.ReplicationRequest, dscrOutput *rds.DescribeDBClustersOutput) rds.RestoreDBClusterToPointInTimeInput {
 	var (
 		DBClusterIdentifier     = "dev-migrate-temp" // to do build string from source cluster id
 		VpcSecurityGroupIdsList []*string
@@ -41,7 +54,22 @@ func RDSDescribeToStruct(replReq dbs.ReplRequest, dscrOutput *rds.DescribeDBClus
 	}
 }
 
-func RDSDescribeCluster(awsSession *session.Session, replreq dbs.ReplRequest) (*rds.DescribeDBClustersOutput, *errors.DBErr) {
+func RDSCreateInstanceToStruct(restoredDB *rds.RestoreDBClusterToPointInTimeOutput) rds.CreateDBInstanceInput {
+	var (
+		DBInstanceClassInput      = "db.t2.small"
+		DBInstanceIdentifierInput = "dev-migrate-temp-instance"
+		DBEngine                  = "aurora-mysql"
+	)
+
+	return rds.CreateDBInstanceInput{
+		DBClusterIdentifier:  restoredDB.DBCluster.DBClusterIdentifier,
+		DBInstanceClass:      &DBInstanceClassInput,
+		DBInstanceIdentifier: &DBInstanceIdentifierInput,
+		Engine:               &DBEngine,
+	}
+}
+
+func RDSDescribeCluster(awsSession *session.Session, replreq dbs.ReplicationRequest) (*rds.DescribeDBClustersOutput, *errors.DBErr) {
 	var (
 		sourceClusterID = replreq.SourceClusterID
 		rdsSvc          = rds.New(awsSession)
@@ -65,4 +93,42 @@ func RDSRestoreCluster(awsSession *session.Session, input rds.RestoreDBClusterTo
 			err.Error()))
 	}
 	return DBClusterOutput, nil
+}
+
+func RDSCreateInstance(awsSession *session.Session, input rds.CreateDBInstanceInput) (*rds.CreateDBInstanceOutput, *errors.DBErr) {
+	var rdsSvc = rds.New(awsSession)
+	DBInstanceOutput, err := rdsSvc.CreateDBInstance(&input)
+	if err != nil {
+		return nil, errors.NewInternalServerError(fmt.Sprintf("failed to create DB instance: %s",
+			err.Error()))
+	}
+	return DBInstanceOutput, nil
+}
+
+func RDSDescribeEvents(awsSession *session.Session, instance *rds.CreateDBInstanceOutput) (binLogFile *string, binLogPos *string, err *errors.DBErr) {
+	var (
+		rdsSvc = rds.New(awsSession)
+		tries  = 0
+		input  = rds.DescribeEventsInput{
+			SourceIdentifier: instance.DBInstance.DBInstanceIdentifier,
+		}
+	)
+	for tries < 20 {
+		events, err := rdsSvc.DescribeEvents(&input)
+		for _, v := range events.Events {
+			strMessage := aws.StringValue(v.Message)
+			fmt.Println(v.Message)
+			if strings.Contains(strMessage, "Binlog position from crash recovery") {
+				s := strings.Fields(strMessage)
+				return &s[len(s)-2], &s[len(s)-1], nil
+			} else if tries < 20 {
+				time.Sleep(5 * time.Second)
+				tries++
+			} else {
+				return nil, nil, errors.NewBadRequestError(fmt.Sprintf("failed to create DB instance: %s",
+					err.Error()))
+			}
+		}
+	}
+	return
 }

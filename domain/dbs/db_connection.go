@@ -8,12 +8,12 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
-func SourceInitConnection(dbcon ReplRequest) (*sql.DB, error) {
+func SourceInitConnection(request ReplicationRequest) (*sql.DB, error) {
 	dataSourceName := fmt.Sprintf("%s:%s@tcp(%s:3306)/%s",
-		dbcon.SourceUser,
-		dbcon.SourcePassword,
-		dbcon.SourceHost,
-		dbcon.SourceName,
+		request.SourceUser,
+		request.SourcePassword,
+		request.SourceHost,
+		request.SourceDBName,
 	)
 	appDB, err := sql.Open("mysql", dataSourceName)
 	if err != nil {

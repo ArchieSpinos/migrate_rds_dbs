@@ -1,51 +1,71 @@
 package database
 
 import (
-	"net/http"
-
-	"github.com/ArchieSpinos/migrate_rds_dbs/awsresources"
 	"github.com/ArchieSpinos/migrate_rds_dbs/domain/dbs"
-	"github.com/ArchieSpinos/migrate_rds_dbs/services"
 	"github.com/ArchieSpinos/migrate_rds_dbs/utils/errors"
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/gin-gonic/gin"
 )
 
 func SetupRepl(c *gin.Context) {
-	var replreq dbs.ReplRequest
-	if err := c.ShouldBindJSON(&replreq); err != nil {
+	var replicationRequest dbs.ReplicationRequest
+	if err := c.ShouldBindJSON(&replicationRequest); err != nil {
 		dbErr := errors.NewBadRequestError("invalid json body")
 		c.JSON(dbErr.Status, dbErr)
 		return
 	}
-	binLogRetentionResult, listErr := services.EnableBinLogRetention(replreq)
-	if listErr != nil {
-		c.JSON(listErr.Status, listErr)
-		return
-	}
-	c.JSON(http.StatusOK, binLogRetentionResult)
+	// binLogRetentionResult, err := services.EnableBinLogRetention(replicationRequest)
+	// if err != nil {
+	// 	c.JSON(err.Status, err)
+	// 	return
+	// }
+	// fmt.Print("bin log retention query result: s%", binLogRetentionResult)
 
-	awsSession, awsErr := awsresources.CreateSession()
-	if awsErr != nil {
-		c.JSON(awsErr.Status, awsErr)
-		return
-	}
+	// awsSession, err := awsresources.CreateSession()
+	// if err != nil {
+	// 	c.JSON(err.Status, err)
+	// 	return
+	// }
 
-	dbClusters, err := services.RDSDescribeCluster(awsSession, replreq)
+	// dbClusters, err := services.RDSDescribeCluster(awsSession, replicationRequest)
+	// if err != nil {
+	// 	c.JSON(err.Status, err)
+	// 	return
+	// }
+
+	// restoreClusterInput := services.RDSDescribeToStruct(replicationRequest, dbClusters)
+
+	// restoredDB, err := services.RDSRestoreCluster(awsSession, restoreClusterInput)
+	// if err != nil {
+	// 	c.JSON(err.Status, err)
+	// 	return
+	// }
+
+	// createInstanceInput := services.RDSCreateInstanceToStruct(restoredDB)
+
+	// rdsInstance, err := services.RDSCreateInstance(awsSession, createInstanceInput)
+	// if err != nil {
+	// 	c.JSON(err.Status, err)
+	// 	return
+	// }
+
+	// binLogFile, binLogPos, err := services.RDSDescribeEvents(awsSession, rdsInstance)
+	// if err != nil {
+	// 	c.JSON(err.Status, err)
+	// 	return
+	// }
+
+	mysqlDumpFilename, err := dbs.MysqlDump(replicationRequest)
 	if err != nil {
 		c.JSON(err.Status, err)
 		return
 	}
 
-	restoreClusterInput := services.RDSDescribeToStruct(replreq, dbClusters)
-
-	restoredDB, restoreErr := services.RDSRestoreCluster(awsSession, restoreClusterInput)
-	if restoreErr != nil {
-		c.JSON(restoreErr.Status, restoreErr)
+	if err := dbs.MysqlRestore(replicationRequest, aws.StringValue(mysqlDumpFilename)); err != nil {
+		c.JSON(err.Status, err)
 		return
 	}
-	// binlogPos = rds.DescribeEvents(restoredDB)
 
-	// result := dbClusters.DBClusters[0]
-	c.JSON(http.StatusOK, restoredDB)
+	// c.JSON(http.StatusOK, rdsInstance)
 
 }
