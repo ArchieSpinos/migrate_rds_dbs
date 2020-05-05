@@ -12,7 +12,7 @@ import (
 )
 
 func MysqlDump(request ReplicationRequest) (*string, *errors.DBErr) {
-	sourceSQLClient, err := SourceInitConnection(request)
+	sourceSQLClient, err := SourceInitConnection(request, true)
 	if err != nil {
 		return nil, errors.NewInternalServerError(fmt.Sprintf("failed to create DB connection: %s:", err.Error()))
 	}

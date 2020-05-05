@@ -19,7 +19,7 @@ func EnableBinLogRetention(request dbs.ReplicationRequest) (*dbs.QueryResult, *e
 	var query = "show databases;"
 	//var query = "CALL mysql.rds_show_configuration;"
 	result := &dbs.QueryResult{}
-	if err := result.MultiQuery(request, query); err != nil {
+	if err := result.MultiQuery(request, query, true); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -28,10 +28,59 @@ func EnableBinLogRetention(request dbs.ReplicationRequest) (*dbs.QueryResult, *e
 func CreateDestDatabase(request dbs.ReplicationRequest) (*dbs.QueryResult, *errors.DBErr) {
 	var query = fmt.Sprintf("create database %s;", request.SourceDBName)
 	result := &dbs.QueryResult{}
-	if err := result.MultiQuery(request, query); err != nil {
+	if err := result.MultiQuery(request, query, false); err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+func removeSystemDBs(allDBs []string, systemDBs []string) (userDBs []string) {
+	for _, v := range allDBs {
+		for ks, vs := range systemDBs {
+			if v == vs {
+				break
+			} else if ks < len(systemDBs)-1 {
+				continue
+			} else {
+				userDBs = append(userDBs, v)
+			}
+		}
+	}
+	return userDBs
+}
+
+func PreFlightCheck(request dbs.ReplicationRequest) *errors.DBErr {
+	// get source dbs excluding system, get target dbs excluding systemic, loop all source, if one exists in target fail and stop
+
+	var (
+		listQuery  = "show databases;"
+		sourceDBs  = dbs.QueryResult{}
+		destDBs    = dbs.QueryResult{}
+		result     []string
+		systemsDBs = []string{"mysql", "performance_schema", "information_schema", "sys"}
+	)
+
+	if err := sourceDBs.MultiQuery(request, listQuery, true); err != nil {
+		return err
+	}
+	if err := destDBs.MultiQuery(request, listQuery, false); err != nil {
+		return err
+	}
+
+	serviceDBsource := removeSystemDBs(sourceDBs, systemsDBs)
+	serviceDBdest := removeSystemDBs(destDBs, systemsDBs)
+
+	for _, sourceV := range serviceDBsource {
+		for _, destV := range serviceDBdest {
+			if sourceV == destV {
+				result = append(result, sourceV)
+			}
+		}
+	}
+	if len(result) > 0 {
+		return errors.NewInternalServerError(fmt.Sprintf("The following source host databases exist in destination: %v. RDS transactional replication will migrate all databases so those existing in destination will be overwritten. Cannot continue", result))
+	}
+	return nil
 }
 
 func RDSDescribeToStruct(replReq dbs.ReplicationRequest, dscrOutput *rds.DescribeDBClustersOutput) rds.RestoreDBClusterToPointInTimeInput {

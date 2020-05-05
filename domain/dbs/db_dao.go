@@ -6,8 +6,8 @@ import (
 	"github.com/ArchieSpinos/migrate_rds_dbs/utils/errors"
 )
 
-func (result *QueryResult) LogRetention(request ReplicationRequest, query string) *errors.DBErr {
-	sourceSQLClient, err := SourceInitConnection(request)
+func (result *QueryResult) LogRetention(request ReplicationRequest, query string, source bool) *errors.DBErr {
+	sourceSQLClient, err := SourceInitConnection(request, source)
 	if err != nil {
 		return errors.NewInternalServerError(fmt.Sprintf("failed to create DB connection: %s:", err.Error()))
 	}

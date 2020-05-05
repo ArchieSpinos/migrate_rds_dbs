@@ -2,8 +2,8 @@ package database
 
 import (
 	"github.com/ArchieSpinos/migrate_rds_dbs/domain/dbs"
+	"github.com/ArchieSpinos/migrate_rds_dbs/services"
 	"github.com/ArchieSpinos/migrate_rds_dbs/utils/errors"
-	"github.com/aws/aws-sdk-go/aws"
 	"github.com/gin-gonic/gin"
 )
 
@@ -14,11 +14,18 @@ func SetupRepl(c *gin.Context) {
 		c.JSON(dbErr.Status, dbErr)
 		return
 	}
+
+	if err := services.PreFlightCheck(replicationRequest); err != nil {
+		c.JSON(err.Status, err)
+		return
+	}
+
 	// binLogRetentionResult, err := services.EnableBinLogRetention(replicationRequest)
 	// if err != nil {
 	// 	c.JSON(err.Status, err)
 	// 	return
 	// }
+	// c.JSON(http.StatusOK, binLogRetentionResult)
 	// fmt.Print("bin log retention query result: s%", binLogRetentionResult)
 
 	// awsSession, err := awsresources.CreateSession()
@@ -55,16 +62,16 @@ func SetupRepl(c *gin.Context) {
 	// 	return
 	// }
 
-	mysqlDumpFilename, err := dbs.MysqlDump(replicationRequest)
-	if err != nil {
-		c.JSON(err.Status, err)
-		return
-	}
+	// mysqlDumpFilename, err := dbs.MysqlDump(replicationRequest)
+	// if err != nil {
+	// 	c.JSON(err.Status, err)
+	// 	return
+	// }
 
-	if err := dbs.MysqlRestore(replicationRequest, aws.StringValue(mysqlDumpFilename)); err != nil {
-		c.JSON(err.Status, err)
-		return
-	}
+	// if err := dbs.MysqlRestore(replicationRequest, aws.StringValue(mysqlDumpFilename)); err != nil {
+	// 	c.JSON(err.Status, err)
+	// 	return
+	// }
 
 	// c.JSON(http.StatusOK, rdsInstance)
 
