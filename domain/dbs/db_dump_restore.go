@@ -3,49 +3,50 @@ package dbs
 import (
 	"bytes"
 	"fmt"
+	"io/ioutil"
 	"os/exec"
-
-	"github.com/aws/aws-sdk-go/aws"
+	"time"
 
 	"github.com/ArchieSpinos/migrate_rds_dbs/utils/errors"
-	"github.com/JamesStewy/go-mysqldump"
 )
 
-func MysqlDump(request ReplicationRequest) (*string, *errors.DBErr) {
-	sourceSQLClient, err := SourceInitConnection(request, true)
-	if err != nil {
-		return nil, errors.NewInternalServerError(fmt.Sprintf("failed to create DB connection: %s:", err.Error()))
+func MysqlDumpExec(request ReplicationRequest, restoredInstanceDNS string, serviceDBs []string) *errors.DBErr {
+	var (
+		serviceDB string
+		out       bytes.Buffer
+		stderr    bytes.Buffer
+	)
+	for _, v := range serviceDBs {
+		serviceDB = v
+		dumpFile := request.MysqlDumpPath + "backup-" + serviceDB + "-" + time.Now().Format("2006-01-02") + ".sql"
+		cmd := exec.Command("mysqldump", "--databases", serviceDB, "--single-transaction", "--set-gtid-purged=OFF", "--compress", "--order-by-primary", "-r", dumpFile, "-h", restoredInstanceDNS, "-u", request.SourceUser, "-p"+request.SourcePassword)
+		cmd.Stdout = &out
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			return errors.NewInternalServerError(fmt.Sprintf("Error dumping all source host databases: %s", stderr.String()))
+		}
 	}
-	dumpDir := request.MysqlDumpPath // you should create this directory
-	dumpFilenameFormat := fmt.Sprintf("%s-20060102T150405", request.SourceDBName)
-
-	// Register database with mysqldump
-	dumper, err := mysqldump.Register(sourceSQLClient, dumpDir, dumpFilenameFormat)
-	if err != nil {
-		return nil, errors.NewInternalServerError(fmt.Sprintf("Error registering database: %s", err.Error()))
-	}
-
-	// Dump database to file
-	resultFilename, err := dumper.Dump()
-	if err != nil {
-		return nil, errors.NewInternalServerError(fmt.Sprintf("Error dumping database: %s", err.Error()))
-	}
-	fmt.Printf("File is saved to %s", resultFilename)
-
-	// Close dumper and connected database
-	dumper.Close()
-	return aws.String(resultFilename), nil
+	return nil
 }
 
-func MysqlRestore(request ReplicationRequest, mysqlDumpFilename string) *errors.DBErr {
-	cmd := exec.Command("mysql", "-h", request.DestHost, "-u", request.DestUser, "-p"+request.DestPassword,
-		"-D", request.SourceDBName, "-e", "source", mysqlDumpFilename)
-	var out bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return errors.NewInternalServerError(fmt.Sprintf("Error restoring database: %s", stderr.String()))
+func MysqlRestore(request ReplicationRequest) *errors.DBErr {
+	var (
+		out    bytes.Buffer
+		stderr bytes.Buffer
+	)
+	files, err := ioutil.ReadDir(request.MysqlDumpPath)
+	if err != nil {
+		return errors.NewInternalServerError(fmt.Sprintf("Error listing dump files: %s", err.Error()))
+	}
+
+	for _, v := range files {
+		execute := "source " + request.MysqlDumpPath + v.Name()
+		cmd := exec.Command("mysql", "-h", request.DestHost, "-u", request.DestUser, "-p"+request.DestPassword, "-e", execute)
+		cmd.Stdout = &out
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			return errors.NewInternalServerError(fmt.Sprintf("Error restoring database: %s", stderr.String()))
+		}
 	}
 	return nil
 }

@@ -25,6 +25,15 @@ func EnableBinLogRetention(request dbs.ReplicationRequest) (*dbs.QueryResult, *e
 	return result, nil
 }
 
+// func SetupReplication(request dbs.ReplicationRequest) (*dbs.QueryResult, *errors.DBErr) {
+// 	var queries = []string{"CALL mysql.rds_set_configuration('binlog retention hours', 144);", "CALL mysql.rds_show_configuration;"}
+// 	result := &dbs.QueryResult{}
+// 	if err := result.MultiQuery(request, queries, true); err != nil {
+// 		return nil, err
+// 	}
+// 	return result, nil
+// }
+
 func CreateDestDatabase(request dbs.ReplicationRequest) (*dbs.QueryResult, *errors.DBErr) {
 	var query = fmt.Sprintf("create database %s;", request.SourceDBName)
 	result := &dbs.QueryResult{}
@@ -49,7 +58,7 @@ func removeSystemDBs(allDBs []string, systemDBs []string) (userDBs []string) {
 	return userDBs
 }
 
-func PreFlightCheck(request dbs.ReplicationRequest) *errors.DBErr {
+func PreFlightCheck(request dbs.ReplicationRequest) (serviceDBs []string, err *errors.DBErr) {
 	// get source dbs excluding system, get target dbs excluding systemic, loop all source, if one exists in target fail and stop
 
 	var (
@@ -61,10 +70,10 @@ func PreFlightCheck(request dbs.ReplicationRequest) *errors.DBErr {
 	)
 
 	if err := sourceDBs.MultiQuery(request, listQuery, true); err != nil {
-		return err
+		return nil, err
 	}
 	if err := destDBs.MultiQuery(request, listQuery, false); err != nil {
-		return err
+		return nil, err
 	}
 
 	serviceDBsource := removeSystemDBs(sourceDBs, systemsDBs)
@@ -78,9 +87,9 @@ func PreFlightCheck(request dbs.ReplicationRequest) *errors.DBErr {
 		}
 	}
 	if len(result) > 0 {
-		return errors.NewInternalServerError(fmt.Sprintf("The following source host databases exist in destination: %v. RDS transactional replication will migrate all databases so those existing in destination will be overwritten. Cannot continue", result))
+		return nil, errors.NewInternalServerError(fmt.Sprintf("The following source host databases exist in destination: %v. RDS transactional replication will migrate all databases so those existing in destination will be overwritten. Cannot continue", result))
 	}
-	return nil
+	return serviceDBsource, nil
 }
 
 func RDSDescribeToStruct(replReq dbs.ReplicationRequest, dscrOutput *rds.DescribeDBClustersOutput) rds.RestoreDBClusterToPointInTimeInput {
@@ -156,27 +165,33 @@ func RDSCreateInstance(awsSession *session.Session, input rds.CreateDBInstanceIn
 
 func RDSDescribeEvents(awsSession *session.Session, instance *rds.CreateDBInstanceOutput) (binLogFile *string, binLogPos *string, err *errors.DBErr) {
 	var (
-		rdsSvc = rds.New(awsSession)
-		tries  = 0
-		input  = rds.DescribeEventsInput{
+		rdsSvc     = rds.New(awsSession)
+		tries      = 0
+		sourceType = "db-instance"
+		input      = rds.DescribeEventsInput{
 			SourceIdentifier: instance.DBInstance.DBInstanceIdentifier,
+			SourceType:       &sourceType,
 		}
 	)
-	for tries < 20 {
+	for tries < 180 {
 		events, err := rdsSvc.DescribeEvents(&input)
+		if err != nil {
+			return nil, nil, errors.NewBadRequestError(fmt.Sprintf("failed to describe RDS instance events: %s",
+				err.Error()))
+		}
 		for _, v := range events.Events {
 			strMessage := aws.StringValue(v.Message)
-			fmt.Println(v.Message)
 			if strings.Contains(strMessage, "Binlog position from crash recovery") {
 				s := strings.Fields(strMessage)
 				return &s[len(s)-2], &s[len(s)-1], nil
-			} else if tries < 20 {
-				time.Sleep(5 * time.Second)
-				tries++
-			} else {
-				return nil, nil, errors.NewBadRequestError(fmt.Sprintf("failed to create DB instance: %s",
-					err.Error()))
 			}
+		}
+		if tries < 180 {
+			time.Sleep(5 * time.Second)
+			tries++
+		} else {
+			return nil, nil, errors.NewBadRequestError(fmt.Sprintf("failed to create DB instance: %s",
+				err.Error()))
 		}
 	}
 	return

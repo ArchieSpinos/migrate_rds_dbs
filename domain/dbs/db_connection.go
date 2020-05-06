@@ -3,7 +3,6 @@ package dbs
 import (
 	"database/sql"
 	"fmt"
-	"log"
 
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -28,7 +27,7 @@ func SourceInitConnection(request ReplicationRequest, source bool) (*sql.DB, err
 		user,
 		password,
 		host,
-		request.SourceDBName,
+		"mysql",
 	)
 	appDB, err := sql.Open("mysql", dataSourceName)
 	if err != nil {
@@ -40,6 +39,5 @@ func SourceInitConnection(request ReplicationRequest, source bool) (*sql.DB, err
 		//log(err)
 		return nil, err
 	}
-	log.Println("database connection successfully configured")
 	return appDB, nil
 }
