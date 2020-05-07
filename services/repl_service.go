@@ -13,26 +13,47 @@ import (
 	"github.com/aws/aws-sdk-go/service/rds"
 )
 
-func EnableBinLogRetention(request dbs.ReplicationRequest) (*dbs.QueryResult, *errors.DBErr) {
-	//var queries = []string{"CALL mysql.rds_set_configuration('binlog retention hours', 144);", "CALL mysql.rds_show_configuration;"}
-	//var query = "CALL mysql.rds_set_configuration('binlog retention hours', 144);"
-	var query = "show databases;"
-	//var query = "CALL mysql.rds_show_configuration;"
-	result := &dbs.QueryResult{}
-	if err := result.MultiQuery(request, query, true); err != nil {
-		return nil, err
+func BootstrapReplication(request dbs.ReplicationRequest) *errors.DBErr {
+	var (
+		dropReplicaUser = "DROP USER 'repl_user'@'%';"
+		replicaUser     = "CREATE USER 'repl_user'@'%' IDENTIFIED BY '" + request.ReplicaUserPass + "';"
+		grantUser       = "GRANT REPLICATION CLIENT, REPLICATION SLAVE ON *.* TO 'repl_user'@'%';"
+		setBinLog       = "CALL mysql.rds_set_configuration('binlog retention hours', 144);"
+	)
+	var queries = []string{
+		dropReplicaUser,
+		replicaUser,
+		grantUser,
+		setBinLog,
 	}
-	return result, nil
+	for _, query := range queries {
+		fmt.Println(query)
+		result := &dbs.QueryResult{}
+		if err := result.MultiQuery(request, query, true); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-// func SetupReplication(request dbs.ReplicationRequest) (*dbs.QueryResult, *errors.DBErr) {
-// 	var queries = []string{"CALL mysql.rds_set_configuration('binlog retention hours', 144);", "CALL mysql.rds_show_configuration;"}
-// 	result := &dbs.QueryResult{}
-// 	if err := result.MultiQuery(request, queries, true); err != nil {
-// 		return nil, err
-// 	}
-// 	return result, nil
-// }
+func SetupReplication(request dbs.ReplicationRequest, binLogFile string, binLogPos string) *errors.DBErr {
+	var (
+		setMaster        = "CALL mysql.rds_set_external_master ('" + request.SourceHost + "', 3306,'repl_user', '" + request.ReplicaUserPass + "', '" + binLogFile + "', " + binLogPos + ", 0);"
+		startReplication = "CALL mysql.rds_start_replication;"
+	)
+	var queries = []string{
+		setMaster,
+		startReplication,
+	}
+	for _, query := range queries {
+		fmt.Println(query)
+		result := &dbs.QueryResult{}
+		if err := result.MultiQuery(request, query, false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func CreateDestDatabase(request dbs.ReplicationRequest) (*dbs.QueryResult, *errors.DBErr) {
 	var query = fmt.Sprintf("create database %s;", request.SourceDBName)
@@ -165,19 +186,21 @@ func RDSCreateInstance(awsSession *session.Session, input rds.CreateDBInstanceIn
 
 func RDSDescribeEvents(awsSession *session.Session, instance *rds.CreateDBInstanceOutput) (binLogFile *string, binLogPos *string, err *errors.DBErr) {
 	var (
-		rdsSvc     = rds.New(awsSession)
-		tries      = 0
-		sourceType = "db-instance"
-		input      = rds.DescribeEventsInput{
+		rdsSvc           = rds.New(awsSession)
+		tries            = 0
+		sourceType       = "db-instance"
+		duration   int64 = 7200
+		input            = rds.DescribeEventsInput{
 			SourceIdentifier: instance.DBInstance.DBInstanceIdentifier,
 			SourceType:       &sourceType,
+			Duration:         &duration,
 		}
 	)
 	for tries < 180 {
-		events, err := rdsSvc.DescribeEvents(&input)
-		if err != nil {
+		events, describeErr := rdsSvc.DescribeEvents(&input)
+		if describeErr != nil {
 			return nil, nil, errors.NewBadRequestError(fmt.Sprintf("failed to describe RDS instance events: %s",
-				err.Error()))
+				describeErr.Error()))
 		}
 		for _, v := range events.Events {
 			strMessage := aws.StringValue(v.Message)
@@ -190,8 +213,7 @@ func RDSDescribeEvents(awsSession *session.Session, instance *rds.CreateDBInstan
 			time.Sleep(5 * time.Second)
 			tries++
 		} else {
-			return nil, nil, errors.NewBadRequestError(fmt.Sprintf("failed to create DB instance: %s",
-				err.Error()))
+			return nil, nil, errors.NewBadRequestError(fmt.Sprintf("failed to retrieve binlog position and file"))
 		}
 	}
 	return

@@ -14,6 +14,7 @@ type ReplicationRequest struct {
 	SourceClusterID string `json:"source_cluster_id"`
 	SourceDBName    string `json:"source_db_name"`
 	MysqlDumpPath   string `json:"mysql_dump_path"`
+	ReplicaUserPass string `json:"replica_user_pass"`
 	DestName        string `json:"dest_db_name"`
 	DestUser        string `json:"dest_db_user"`
 	DestPassword    string `json:"dest_db_password"`
