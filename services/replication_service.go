@@ -27,7 +27,6 @@ func BootstrapReplication(request dbs.ReplicationRequest) *errors.DBErr {
 		setBinLog,
 	}
 	for _, query := range queries {
-		fmt.Println(query)
 		result := &dbs.QueryResult{}
 		if err := result.MultiQuery(request, query, true); err != nil {
 			return err
@@ -46,7 +45,6 @@ func SetupReplication(request dbs.ReplicationRequest, binLogFile string, binLogP
 		startReplication,
 	}
 	for _, query := range queries {
-		fmt.Println(query)
 		result := &dbs.QueryResult{}
 		if err := result.MultiQuery(request, query, false); err != nil {
 			return err

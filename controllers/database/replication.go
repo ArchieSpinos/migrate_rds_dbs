@@ -1,6 +1,8 @@
 package database
 
 import (
+	"net/http"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/rds"
 
@@ -91,4 +93,5 @@ func SetupRepl(c *gin.Context) {
 		return
 	}
 
+	c.JSON(http.StatusOK, "Transactional replication between source and taget has been setup. You now need to monitor with /seconds_behind_master route that `Seconds_Behind_Master` of mysql> show slave status; has reached zero after which you need to coordinate the microservice mysql switchover and call /promote_slave")
 }

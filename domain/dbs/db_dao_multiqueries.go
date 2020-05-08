@@ -1,6 +1,7 @@
 package dbs
 
 import (
+	"database/sql"
 	"fmt"
 
 	"github.com/ArchieSpinos/migrate_rds_dbs/utils/errors"
@@ -8,19 +9,23 @@ import (
 
 func (result *QueryResult) MultiQuery(request ReplicationRequest, query string, source bool) *errors.DBErr {
 	sourceSQLClient, err := SourceInitConnection(request, source)
+	listResult := &sql.Rows{}
 	if err != nil {
-		return errors.NewInternalServerError(fmt.Sprintf("failed to create DB connection: %s:", err.Error()))
+		return errors.NewInternalServerError(fmt.Sprintf("failed to create DB connection: %s", err.Error()))
 	}
+
 	stmt, err := sourceSQLClient.Prepare(query)
 	defer stmt.Close()
 	if err != nil {
-		return errors.NewInternalServerError(fmt.Sprintf("failed to prepare sql query: %s:", err.Error()))
+		fmt.Println(err.Error())
+		return errors.NewInternalServerError(fmt.Sprintf("failed to prepare sql query: %s", err.Error()))
 	}
-	listResult, err := stmt.Query()
+	listResult, err = stmt.Query()
 	if err != nil {
 		return errors.NewInternalServerError(fmt.Sprintf("failed to execute query: %s",
 			err.Error()))
 	}
+
 	cols, err := listResult.Columns()
 	if err != nil {
 		return errors.NewInternalServerError(fmt.Sprintf("failed to get columns from query: %s",
