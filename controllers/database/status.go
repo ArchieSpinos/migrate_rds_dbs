@@ -1,6 +1,7 @@
 package database
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/ArchieSpinos/migrate_rds_dbs/domain/dbs"
@@ -21,6 +22,6 @@ func SecondsBehindMaster(c *gin.Context) {
 	if err != nil {
 		c.JSON(err.Status, err)
 	} else {
-		c.JSON(http.StatusOK, result.String())
+		c.JSON(http.StatusOK, fmt.Sprintf("Transactional replication has been completed with status: %s", result))
 	}
 }
