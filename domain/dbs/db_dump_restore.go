@@ -5,20 +5,25 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os/exec"
-	"time"
+
+	"github.com/ArchieSpinos/migrate_rds_dbs/persist"
 
 	"github.com/ArchieSpinos/migrate_rds_dbs/utils/errors"
 )
 
-func MysqlDumpExec(request ReplicationRequest, restoredInstanceDNS string, serviceDBs []string) *errors.DBErr {
+func MysqlDumpExec(request ReplicationRequest, restoredInstanceDNS string, serviceDBs []string, pathGlobal string) *errors.DBErr {
 	var (
-		serviceDB string
-		out       bytes.Buffer
-		stderr    bytes.Buffer
+		out    bytes.Buffer
+		stderr bytes.Buffer
 	)
-	for _, v := range serviceDBs {
-		serviceDB = v
-		dumpFile := request.MysqlDumpPath + "backup-" + serviceDB + "-" + time.Now().Format("2006-01-02") + ".sql"
+	fmt.Println(restoredInstanceDNS)
+
+	if err := persist.CreatePath(pathGlobal + "sqldumps"); err != nil {
+		return err
+	}
+
+	for _, serviceDB := range serviceDBs {
+		dumpFile := pathGlobal + "sqldumps/" + serviceDB + ".sql"
 		cmd := exec.Command("mysqldump", "--databases", serviceDB, "--single-transaction", "--set-gtid-purged=OFF", "--compress", "--order-by-primary", "-r", dumpFile, "-h", restoredInstanceDNS, "-u", request.SourceUser, "-p"+request.SourcePassword)
 		cmd.Stdout = &out
 		cmd.Stderr = &stderr
@@ -29,18 +34,18 @@ func MysqlDumpExec(request ReplicationRequest, restoredInstanceDNS string, servi
 	return nil
 }
 
-func MysqlRestore(request ReplicationRequest) *errors.DBErr {
+func MysqlRestore(request ReplicationRequest, pathGlobal string) *errors.DBErr {
 	var (
 		out    bytes.Buffer
 		stderr bytes.Buffer
 	)
-	files, err := ioutil.ReadDir(request.MysqlDumpPath)
+	files, err := ioutil.ReadDir(pathGlobal + "/sqldumps")
 	if err != nil {
 		return errors.NewInternalServerError(fmt.Sprintf("Error listing dump files: %s", err.Error()))
 	}
 
 	for _, v := range files {
-		execute := "source " + request.MysqlDumpPath + v.Name()
+		execute := "source " + pathGlobal + "/sqldumps/" + v.Name()
 		cmd := exec.Command("mysql", "-h", request.DestHost, "-u", request.DestUser, "-p"+request.DestPassword, "-e", execute)
 		cmd.Stdout = &out
 		cmd.Stderr = &stderr

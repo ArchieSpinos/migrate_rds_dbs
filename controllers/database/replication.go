@@ -3,13 +3,14 @@ package database
 import (
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/ArchieSpinos/migrate_rds_dbs/awsresources"
 	"github.com/ArchieSpinos/migrate_rds_dbs/domain/dbs"
 	"github.com/ArchieSpinos/migrate_rds_dbs/persist"
 	"github.com/ArchieSpinos/migrate_rds_dbs/services"
 	"github.com/ArchieSpinos/migrate_rds_dbs/utils/errors"
-	"github.com/aws/aws-sdk-go/service/rds"
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/gin-gonic/gin"
 )
 
@@ -22,13 +23,24 @@ func SetupRepl(c *gin.Context) {
 	}
 	var pathGlobal = "/tmp/" + replicationRequest.SourceDBName + "/"
 
-	serviceDBs, err := services.PreFlightCheck(replicationRequest)
+	serviceDBsSource, serviceDBsDest, err := services.PreFlightCheck(replicationRequest, pathGlobal)
 	if err != nil {
 		c.JSON(err.Status, err)
 		return
 	}
 
-	fmt.Println(serviceDBs) //delete after testing
+	fmt.Println(serviceDBsSource)
+	fmt.Println(serviceDBsDest)
+
+	if err := persist.CreatePath(pathGlobal); err != nil {
+		c.JSON(err.Status, err)
+		return
+	}
+
+	if err := persist.Save(pathGlobal, "serviceDBsDest", serviceDBsDest); err != nil {
+		c.JSON(err.Status, err)
+		return
+	}
 
 	if err := services.BootstrapReplication(replicationRequest); err != nil {
 		c.JSON(err.Status, err)
@@ -55,7 +67,7 @@ func SetupRepl(c *gin.Context) {
 		return
 	}
 
-	createInstanceInput := services.RDSCreateInstanceToStruct(restoredDB)
+	createInstanceInput := services.RDSCreateInstanceToStruct(restoredDB, replicationRequest)
 
 	rdsInstance, err := services.RDSCreateInstance(awsSession, createInstanceInput)
 	if err != nil {
@@ -63,23 +75,9 @@ func SetupRepl(c *gin.Context) {
 		return
 	}
 
-	if err := persist.Save(pathGlobal, "rdsInstance", rdsInstance); err != nil {
-		c.JSON(err.Status, err)
-		return
-	}
-
-	obj := &rds.CreateDBInstanceOutput{}
-
-	if err := persist.Load(pathGlobal+"rdsInstance", obj); err != nil {
-		c.JSON(err.Status, err)
-		return
-	}
-
-	fmt.Println(obj)
-
-	//mock CreateDBInstanceOutput
-	// var instance = "dev-migrate-temp-instance"
-	// var address = "dev-migrate-temp-instance.cmnsml8q1eeo.eu-west-1.rds.amazonaws.com"
+	// // mock CreateDBInstanceOutput
+	// var instance = "migrate-temp-instance-source3"
+	// var address = "migrate-temp-instance-source3.cmnsml8q1eeo.eu-west-1.rds.amazonaws.com"
 	// rdsInstance := &rds.CreateDBInstanceOutput{
 	// 	DBInstance: &rds.DBInstance{
 	// 		DBInstanceIdentifier: &instance,
@@ -89,26 +87,38 @@ func SetupRepl(c *gin.Context) {
 	// 	},
 	// }
 
-	// binLogFile, binLogPos, err := services.RDSDescribeEvents(awsSession, rdsInstance)
-	// if err != nil {
-	// 	c.JSON(err.Status, err)
-	// 	return
-	// }
+	if err := services.RDSWaitUntilInstanceAvailable(awsSession, rdsInstance); err != nil {
+		c.JSON(err.Status, err)
+		return
+	}
 
-	// if err := dbs.MysqlDumpExec(replicationRequest, aws.StringValue(rdsInstance.DBInstance.Endpoint.Address), serviceDBs); err != nil {
-	// 	c.JSON(err.Status, err)
-	// 	return
-	// }
+	time.Sleep(180 * time.Second)
 
-	// if err := dbs.MysqlRestore(replicationRequest); err != nil {
-	// 	c.JSON(err.Status, err)
-	// 	return
-	// }
+	if err := persist.Save(pathGlobal, "rdsInstance", rdsInstance); err != nil {
+		c.JSON(err.Status, err)
+		return
+	}
 
-	// if err := services.SetupReplication(replicationRequest, aws.StringValue(binLogFile), aws.StringValue(binLogPos)); err != nil {
-	// 	c.JSON(err.Status, err)
-	// 	return
-	// }
+	binLogFile, binLogPos, err := services.RDSDescribeEvents(awsSession, rdsInstance)
+	if err != nil {
+		c.JSON(err.Status, err)
+		return
+	}
+
+	if err := dbs.MysqlDumpExec(replicationRequest, aws.StringValue(rdsInstance.DBInstance.Endpoint.Address), serviceDBsSource, pathGlobal); err != nil {
+		c.JSON(err.Status, err)
+		return
+	}
+
+	if err := dbs.MysqlRestore(replicationRequest, pathGlobal); err != nil {
+		c.JSON(err.Status, err)
+		return
+	}
+
+	if err := services.SetupReplication(replicationRequest, aws.StringValue(binLogFile), aws.StringValue(binLogPos)); err != nil {
+		c.JSON(err.Status, err)
+		return
+	}
 
 	c.JSON(http.StatusOK, "Transactional replication between source and taget has been setup. You now need to monitor with /seconds_behind_master route that `Seconds_Behind_Master` of mysql> show slave status; has reached zero after which you need to coordinate the microservice mysql switchover and call /promote_slave")
 }

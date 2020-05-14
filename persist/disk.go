@@ -27,9 +27,6 @@ func Marshal(v interface{}) (io.Reader, error) {
 func Save(directory string, file string, v interface{}) *errors.DBErr {
 	lock.Lock()
 	defer lock.Unlock()
-	if err := os.Mkdir(directory, 0777); err != nil {
-		return errors.NewInternalServerError(fmt.Sprintf("failed to create return object directory: %s", err.Error()))
-	}
 	f, err := os.Create(directory + file)
 	if err != nil {
 		return errors.NewInternalServerError(fmt.Sprintf("failed to create return object file: %s", err.Error()))
@@ -57,6 +54,22 @@ func Load(path string, v interface{}) *errors.DBErr {
 	defer f.Close()
 	if err = json.NewDecoder(f).Decode(&v); err != nil {
 		return errors.NewInternalServerError(fmt.Sprintf("failed to decode object file to interface: %s", err.Error()))
+	}
+	return nil
+}
+
+// CreatePath creates the dump files directory
+func CreatePath(directory string) *errors.DBErr {
+	if err := os.Mkdir(directory, 0777); err != nil {
+		return errors.NewInternalServerError(fmt.Sprintf("failed to create return object directory: %s", err.Error()))
+	}
+	return nil
+}
+
+// DeletePath deletes the dump files directory
+func DeletePath(directory string) *errors.DBErr {
+	if err := os.RemoveAll(directory); err != nil {
+		return errors.NewInternalServerError(fmt.Sprintf("failed to delete return object directory: %s", err.Error()))
 	}
 	return nil
 }

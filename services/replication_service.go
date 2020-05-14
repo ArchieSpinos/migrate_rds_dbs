@@ -1,7 +1,9 @@
 package services
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -13,6 +15,8 @@ import (
 	"github.com/aws/aws-sdk-go/service/rds"
 )
 
+// BootstrapReplication boostraps transactional replication by creating
+// replication user and setting binlog retention on source cluster.
 func BootstrapReplication(request dbs.ReplicationRequest) *errors.DBErr {
 	var (
 		dropReplicaUser = "DROP USER 'repl_user'@'%';"
@@ -35,6 +39,7 @@ func BootstrapReplication(request dbs.ReplicationRequest) *errors.DBErr {
 	return nil
 }
 
+// SetupReplication bootstraps transactional replication at target cluster.
 func SetupReplication(request dbs.ReplicationRequest, binLogFile string, binLogPos string) *errors.DBErr {
 	var (
 		setMaster        = "CALL mysql.rds_set_external_master ('" + request.SourceHost + "', 3306,'repl_user', '" + request.ReplicaUserPass + "', '" + binLogFile + "', " + binLogPos + ", 0);"
@@ -53,15 +58,6 @@ func SetupReplication(request dbs.ReplicationRequest, binLogFile string, binLogP
 	return nil
 }
 
-func CreateDestDatabase(request dbs.ReplicationRequest) (*dbs.QueryResult, *errors.DBErr) {
-	var query = fmt.Sprintf("create database %s;", request.SourceDBName)
-	result := &dbs.QueryResult{}
-	if err := result.MultiQuery(request, query, false); err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
 func removeSystemDBs(allDBs []string, systemDBs []string) (userDBs []string) {
 	for _, v := range allDBs {
 		for ks, vs := range systemDBs {
@@ -77,8 +73,9 @@ func removeSystemDBs(allDBs []string, systemDBs []string) (userDBs []string) {
 	return userDBs
 }
 
-func PreFlightCheck(request dbs.ReplicationRequest) (serviceDBs []string, err *errors.DBErr) {
-	// get source dbs excluding system, get target dbs excluding systemic, loop all source, if one exists in target fail and stop
+// PreFlightCheck checks that none of the source cluster databases exist in the target
+// because that would cause the transactional replication to override the target ones.
+func PreFlightCheck(request dbs.ReplicationRequest, pathGlobal string) (serviceDBsSource []string, serviceDBsDest []string, err *errors.DBErr) {
 
 	var (
 		listQuery  = "show databases;"
@@ -88,32 +85,38 @@ func PreFlightCheck(request dbs.ReplicationRequest) (serviceDBs []string, err *e
 		systemsDBs = []string{"mysql", "performance_schema", "information_schema", "sys"}
 	)
 
+	if _, err := os.Stat(pathGlobal); err == nil {
+		return nil, nil, errors.NewInternalServerError(fmt.Sprintf("The dump path %s already exists. You need to delete it first.", pathGlobal))
+	}
+
 	if err := sourceDBs.MultiQuery(request, listQuery, true); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := destDBs.MultiQuery(request, listQuery, false); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	serviceDBsource := removeSystemDBs(sourceDBs, systemsDBs)
-	serviceDBdest := removeSystemDBs(destDBs, systemsDBs)
+	serviceDBsSource = removeSystemDBs(sourceDBs, systemsDBs)
+	serviceDBsDest = removeSystemDBs(destDBs, systemsDBs)
 
-	for _, sourceV := range serviceDBsource {
-		for _, destV := range serviceDBdest {
+	for _, sourceV := range serviceDBsSource {
+		for _, destV := range serviceDBsDest {
 			if sourceV == destV {
 				result = append(result, sourceV)
 			}
 		}
 	}
 	if len(result) > 0 {
-		return nil, errors.NewInternalServerError(fmt.Sprintf("The following source host databases exist in destination: %v. RDS transactional replication will migrate all databases so those existing in destination will be overwritten. Cannot continue", result))
+		return nil, nil, errors.NewInternalServerError(fmt.Sprintf("The following source host databases exist in destination: %v. RDS transactional replication will migrate all databases so those existing in destination will be overwritten. Cannot continue", result))
 	}
-	return serviceDBsource, nil
+	return serviceDBsSource, serviceDBsDest, nil
 }
 
-func RDSDescribeToStruct(replReq dbs.ReplicationRequest, dscrOutput *rds.DescribeDBClustersOutput) rds.RestoreDBClusterToPointInTimeInput {
+// RDSDescribeToStruct creates an rds.RestoreDBClusterToPointInTimeInput that will be used to create
+// a temp RDS cluster to dump databases from.
+func RDSDescribeToStruct(replicationRequest dbs.ReplicationRequest, dscrOutput *rds.DescribeDBClustersOutput) rds.RestoreDBClusterToPointInTimeInput {
 	var (
-		DBClusterIdentifier     = "dev-migrate-temp" // to do build string from source cluster id
+		DBClusterIdentifier     = "migrate-temp-" + replicationRequest.SourceDBName
 		VpcSecurityGroupIdsList []*string
 		LatestRestorableTime    = true
 	)
@@ -125,16 +128,18 @@ func RDSDescribeToStruct(replReq dbs.ReplicationRequest, dscrOutput *rds.Describ
 		DBClusterIdentifier:         &DBClusterIdentifier,
 		DBClusterParameterGroupName: dscrOutput.DBClusters[0].DBClusterParameterGroup,
 		DBSubnetGroupName:           dscrOutput.DBClusters[0].DBSubnetGroup,
-		SourceDBClusterIdentifier:   &replReq.SourceClusterID,
+		SourceDBClusterIdentifier:   &replicationRequest.SourceClusterID,
 		VpcSecurityGroupIds:         VpcSecurityGroupIdsList,
 		UseLatestRestorableTime:     &LatestRestorableTime,
 	}
 }
 
-func RDSCreateInstanceToStruct(restoredDB *rds.RestoreDBClusterToPointInTimeOutput) rds.CreateDBInstanceInput {
+// RDSCreateInstanceToStruct creates an rds.RestoreDBClusterToPointInTimeInput that will be used to create
+// a temp RDS instance to dump databases from.
+func RDSCreateInstanceToStruct(restoredDB *rds.RestoreDBClusterToPointInTimeOutput, replicationRequest dbs.ReplicationRequest) rds.CreateDBInstanceInput {
 	var (
-		DBInstanceClassInput      = "db.t2.small"
-		DBInstanceIdentifierInput = "dev-migrate-temp-instance"
+		DBInstanceClassInput      = "db.r4.large"
+		DBInstanceIdentifierInput = "migrate-temp-instance-" + replicationRequest.SourceDBName
 		DBEngine                  = "aurora-mysql"
 	)
 
@@ -146,9 +151,11 @@ func RDSCreateInstanceToStruct(restoredDB *rds.RestoreDBClusterToPointInTimeOutp
 	}
 }
 
-func RDSDescribeCluster(awsSession *session.Session, replreq dbs.ReplicationRequest) (*rds.DescribeDBClustersOutput, *errors.DBErr) {
+// RDSDescribeCluster retrieves information about the temp RDS cluster used to dump
+// databases from.
+func RDSDescribeCluster(awsSession *session.Session, replicationRequest dbs.ReplicationRequest) (*rds.DescribeDBClustersOutput, *errors.DBErr) {
 	var (
-		sourceClusterID = replreq.SourceClusterID
+		sourceClusterID = replicationRequest.SourceClusterID
 		rdsSvc          = rds.New(awsSession)
 		clusterInput    = rds.DescribeDBClustersInput{
 			DBClusterIdentifier: &sourceClusterID,
@@ -160,6 +167,31 @@ func RDSDescribeCluster(awsSession *session.Session, replreq dbs.ReplicationRequ
 			err.Error()))
 	}
 	return DBClusterOutput, nil
+}
+
+func RDSDescribeInstance(awsSession *session.Session, instance rds.CreateDBInstanceOutput) *errors.DBErr {
+	var (
+		rdsSvc        = rds.New(awsSession)
+		instanceInput = rds.DescribeDBInstancesInput{
+			DBInstanceIdentifier: instance.DBInstance.DBInstanceIdentifier,
+		}
+		tries = 0
+	)
+	for tries < 36 {
+		rdsAddress, err := rdsSvc.DescribeDBInstances(&instanceInput)
+		if err != nil {
+			return errors.NewBadRequestError(fmt.Sprintf("failed to describe RDS instance: %s",
+				err.Error()))
+		} else if aws.StringValue(rdsAddress.DBInstances[0].Endpoint.Address) != "" {
+			return nil
+		} else if tries < 36 {
+			time.Sleep(5 * time.Second)
+			tries++
+		} else {
+			return errors.NewBadRequestError(fmt.Sprintf("failed to retrieve RDS instance fqdn"))
+		}
+	}
+	return nil
 }
 
 func RDSRestoreCluster(awsSession *session.Session, input rds.RestoreDBClusterToPointInTimeInput) (*rds.RestoreDBClusterToPointInTimeOutput, *errors.DBErr) {
@@ -182,6 +214,22 @@ func RDSCreateInstance(awsSession *session.Session, input rds.CreateDBInstanceIn
 	return DBInstanceOutput, nil
 }
 
+func RDSWaitUntilInstanceAvailable(awsSession *session.Session, dbInstanceOutput *rds.CreateDBInstanceOutput) *errors.DBErr {
+	var (
+		rdsSvc = rds.New(awsSession)
+		input  = rds.DescribeDBInstancesInput{
+			DBInstanceIdentifier: dbInstanceOutput.DBInstance.DBInstanceIdentifier,
+		}
+	)
+	fmt.Println("in wait function")
+	ctx, _ := context.WithTimeout(context.Background(), time.Duration(1800)*time.Second)
+	if err := rdsSvc.WaitUntilDBInstanceAvailableWithContext(ctx, &input); err != nil {
+		return errors.NewInternalServerError(fmt.Sprintf("RDS instance did not become available in a timely manner: %s",
+			err.Error()))
+	}
+	return nil
+}
+
 func RDSDescribeEvents(awsSession *session.Session, instance *rds.CreateDBInstanceOutput) (binLogFile *string, binLogPos *string, err *errors.DBErr) {
 	var (
 		rdsSvc           = rds.New(awsSession)
@@ -194,7 +242,7 @@ func RDSDescribeEvents(awsSession *session.Session, instance *rds.CreateDBInstan
 			Duration:         &duration,
 		}
 	)
-	for tries < 180 {
+	for tries < 720 {
 		events, describeErr := rdsSvc.DescribeEvents(&input)
 		if describeErr != nil {
 			return nil, nil, errors.NewBadRequestError(fmt.Sprintf("failed to describe RDS instance events: %s",
@@ -207,7 +255,7 @@ func RDSDescribeEvents(awsSession *session.Session, instance *rds.CreateDBInstan
 				return &s[len(s)-2], &s[len(s)-1], nil
 			}
 		}
-		if tries < 180 {
+		if tries < 720 {
 			time.Sleep(5 * time.Second)
 			tries++
 		} else {
