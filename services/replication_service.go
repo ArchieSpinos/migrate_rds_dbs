@@ -169,29 +169,35 @@ func RDSDescribeCluster(awsSession *session.Session, replicationRequest dbs.Repl
 	return DBClusterOutput, nil
 }
 
-func RDSDescribeInstance(awsSession *session.Session, instance rds.CreateDBInstanceOutput) *errors.DBErr {
+// RDSWaitForAddress waits for RDS to assign fqdn to newly created instance. As this can take
+// some seconds after instance has been created we need to check before retrieving
+func RDSWaitForAddress(awsSession *session.Session, instance *rds.CreateDBInstanceOutput) (*rds.DescribeDBInstancesOutput, *errors.DBErr) {
 	var (
 		rdsSvc        = rds.New(awsSession)
 		instanceInput = rds.DescribeDBInstancesInput{
 			DBInstanceIdentifier: instance.DBInstance.DBInstanceIdentifier,
 		}
-		tries = 0
+		tries            = 0
+		describeInstance *rds.DescribeDBInstancesOutput
 	)
+	fmt.Println("in wait for address")
 	for tries < 36 {
-		rdsAddress, err := rdsSvc.DescribeDBInstances(&instanceInput)
+		describeInstance, err := rdsSvc.DescribeDBInstances(&instanceInput)
+		fmt.Println(describeInstance.DBInstances[0].Endpoint)
 		if err != nil {
-			return errors.NewBadRequestError(fmt.Sprintf("failed to describe RDS instance: %s",
+			return nil, errors.NewBadRequestError(fmt.Sprintf("failed to describe RDS instance: %s",
 				err.Error()))
-		} else if aws.StringValue(rdsAddress.DBInstances[0].Endpoint.Address) != "" {
-			return nil
+		} else if describeInstance.DBInstances[0].Endpoint != nil {
+			return describeInstance, nil
 		} else if tries < 36 {
 			time.Sleep(5 * time.Second)
 			tries++
 		} else {
-			return errors.NewBadRequestError(fmt.Sprintf("failed to retrieve RDS instance fqdn"))
+			return nil, errors.NewBadRequestError(fmt.Sprintf("failed to retrieve RDS instance fqdn"))
 		}
 	}
-	return nil
+	fmt.Println(describeInstance.DBInstances[0].Endpoint.Address)
+	return describeInstance, nil
 }
 
 func RDSRestoreCluster(awsSession *session.Session, input rds.RestoreDBClusterToPointInTimeInput) (*rds.RestoreDBClusterToPointInTimeOutput, *errors.DBErr) {
@@ -222,7 +228,7 @@ func RDSWaitUntilInstanceAvailable(awsSession *session.Session, dbInstanceOutput
 		}
 	)
 	fmt.Println("in wait function")
-	ctx, _ := context.WithTimeout(context.Background(), time.Duration(1800)*time.Second)
+	ctx, _ := context.WithTimeout(context.Background(), time.Duration(7200)*time.Second)
 	if err := rdsSvc.WaitUntilDBInstanceAvailableWithContext(ctx, &input); err != nil {
 		return errors.NewInternalServerError(fmt.Sprintf("RDS instance did not become available in a timely manner: %s",
 			err.Error()))

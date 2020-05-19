@@ -3,7 +3,6 @@ package database
 import (
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/ArchieSpinos/migrate_rds_dbs/awsresources"
 	"github.com/ArchieSpinos/migrate_rds_dbs/domain/dbs"
@@ -92,9 +91,13 @@ func SetupRepl(c *gin.Context) {
 		return
 	}
 
-	time.Sleep(180 * time.Second)
+	describeInstance, err := services.RDSWaitForAddress(awsSession, rdsInstance)
+	if err != nil {
+		c.JSON(err.Status, err)
+		return
+	}
 
-	if err := persist.Save(pathGlobal, "rdsInstance", rdsInstance); err != nil {
+	if err := persist.Save(pathGlobal, "describeInstance", describeInstance); err != nil {
 		c.JSON(err.Status, err)
 		return
 	}
@@ -105,7 +108,7 @@ func SetupRepl(c *gin.Context) {
 		return
 	}
 
-	if err := dbs.MysqlDumpExec(replicationRequest, aws.StringValue(rdsInstance.DBInstance.Endpoint.Address), serviceDBsSource, pathGlobal); err != nil {
+	if err := dbs.MysqlDumpExec(replicationRequest, aws.StringValue(describeInstance.DBInstances[0].Endpoint.Address), serviceDBsSource, pathGlobal); err != nil {
 		c.JSON(err.Status, err)
 		return
 	}

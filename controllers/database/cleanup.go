@@ -28,32 +28,34 @@ func PromoteSlave(c *gin.Context) {
 		return
 	}
 	var (
-		pathGlobal             = "/tmp/" + replicationRequest.SourceDBName + "/"
-		createDBInstanceOutput = rds.CreateDBInstanceOutput{}
-		serviceDBsDest         []string
+		pathGlobal               = "/tmp/" + replicationRequest.SourceDBName + "/"
+		describeDBInstanceOutput = &rds.DescribeDBInstancesOutput{}
+		serviceDBsDest           = &[]string{}
 	)
 
-	if err := persist.Load(pathGlobal+"rdsInstance", createDBInstanceOutput); err != nil {
+	if err := persist.Load(pathGlobal+"describeInstance", describeDBInstanceOutput); err != nil {
 		c.JSON(err.Status, err)
 		return
 	}
 
-	if err := persist.Load(pathGlobal+"serviceDBsDest", serviceDBsDest); err != nil {
+	if err := persist.Load(pathGlobal+"serviceDBsDest", &serviceDBsDest); err != nil {
 		c.JSON(err.Status, err)
 		return
 	}
+
+	serviceDBsDestString := services.SlicePointerToSlice(serviceDBsDest)
 
 	if err := services.PromoteSlave(replicationRequest); err != nil {
 		c.JSON(err.Status, err)
 		return
 	}
 
-	if err := services.RDSDeleteInstance(awsSession, createDBInstanceOutput); err != nil {
+	if err := services.RDSDeleteInstance(awsSession, *describeDBInstanceOutput); err != nil {
 		c.JSON(err.Status, err)
 		return
 	}
 
-	if err := services.CleanUpDBs(replicationRequest, serviceDBsDest); err != nil {
+	if err := services.CleanUpDBs(replicationRequest, serviceDBsDestString); err != nil {
 		c.JSON(err.Status, err)
 		return
 	}
@@ -63,5 +65,5 @@ func PromoteSlave(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, fmt.Sprintf("Cleanup has been complete. %s database has been dropped from %s and %s temp RDS cluster instance has been deleted", replicationRequest.SourceDBName, replicationRequest.SourceClusterID, aws.StringValue(createDBInstanceOutput.DBInstance.DBInstanceArn)))
+	c.JSON(http.StatusOK, fmt.Sprintf("Cleanup has been complete. %s database has been dropped from %s and %s temp RDS cluster instance has been deleted", replicationRequest.SourceDBName, replicationRequest.SourceClusterID, aws.StringValue(describeDBInstanceOutput.DBInstances[0].DBInstanceIdentifier)))
 }

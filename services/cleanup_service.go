@@ -11,6 +11,11 @@ import (
 	"github.com/aws/aws-sdk-go/service/rds"
 )
 
+func SlicePointerToSlice(input *[]string) []string {
+	output := append([]string{}, *input...)
+	return output
+}
+
 // PromoteSlave promotes slave mysql node to master and stops replication.
 func PromoteSlave(request dbs.ReplicationRequest) *errors.DBErr {
 	var (
@@ -31,11 +36,11 @@ func PromoteSlave(request dbs.ReplicationRequest) *errors.DBErr {
 }
 
 // RDSDeleteInstance deletes temporary RDS instance used to dump databases.
-func RDSDeleteInstance(awsSession *session.Session, input rds.CreateDBInstanceOutput) *errors.DBErr {
+func RDSDeleteInstance(awsSession *session.Session, input rds.DescribeDBInstancesOutput) *errors.DBErr {
 	var (
 		rdsSvc              = rds.New(awsSession)
 		deleteInstanceInput = rds.DeleteDBInstanceInput{
-			DBInstanceIdentifier: input.DBInstance.DBInstanceIdentifier,
+			DBInstanceIdentifier: input.DBInstances[0].DBInstanceIdentifier,
 			SkipFinalSnapshot:    aws.Bool(true),
 		}
 	)
@@ -91,7 +96,7 @@ func CleanUpDBs(request dbs.ReplicationRequest, serviceDBsDest []string) *errors
 		}
 	}
 
-	if err := dropMigratedDB.MultiQuery(request, "drop database"+request.SourceDBName+";", true); err != nil {
+	if err := dropMigratedDB.MultiQuery(request, "drop database "+request.SourceDBName+";", true); err != nil {
 		return err
 	}
 
