@@ -9,10 +9,10 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 )
 
-func CreateSession() (*session.Session, *errors.DBErr) {
+func CreateSession(region string, profile string) (*session.Session, *errors.DBErr) {
 	sess, err := session.NewSession(&aws.Config{
-		Region:      aws.String("eu-west-1"), // to do pass region in api call
-		Credentials: credentials.NewSharedCredentials("", "beat_prod"),
+		Region:      aws.String(region),
+		Credentials: credentials.NewSharedCredentials("", profile),
 	})
 	if err != nil {
 		return nil, errors.NewBadRequestError(fmt.Sprintf("failed to setup aws session: %s", err.Error()))

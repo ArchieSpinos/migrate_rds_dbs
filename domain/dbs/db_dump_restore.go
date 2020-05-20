@@ -16,7 +16,6 @@ func MysqlDumpExec(request ReplicationRequest, restoredInstanceDNS string, servi
 		out    bytes.Buffer
 		stderr bytes.Buffer
 	)
-	fmt.Println(restoredInstanceDNS)
 
 	if err := persist.CreatePath(pathGlobal + "sqldumps"); err != nil {
 		return err

@@ -17,11 +17,6 @@ import (
 
 func PromoteSlave(c *gin.Context) {
 	var replicationRequest dbs.ReplicationRequest
-	awsSession, err := awsresources.CreateSession()
-	if err != nil {
-		c.JSON(err.Status, err)
-		return
-	}
 	if err := c.ShouldBindJSON(&replicationRequest); err != nil {
 		dbErr := errors.NewBadRequestError("invalid json body")
 		c.JSON(dbErr.Status, dbErr)
@@ -32,6 +27,11 @@ func PromoteSlave(c *gin.Context) {
 		describeDBInstanceOutput = &rds.DescribeDBInstancesOutput{}
 		serviceDBsDest           = &[]string{}
 	)
+	awsSession, err := awsresources.CreateSession(replicationRequest.AwsRegion, replicationRequest.AwsProfile)
+	if err != nil {
+		c.JSON(err.Status, err)
+		return
+	}
 
 	if err := persist.Load(pathGlobal+"describeInstance", describeDBInstanceOutput); err != nil {
 		c.JSON(err.Status, err)

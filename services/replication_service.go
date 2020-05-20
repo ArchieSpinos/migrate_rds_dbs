@@ -119,6 +119,7 @@ func RDSDescribeToStruct(replicationRequest dbs.ReplicationRequest, dscrOutput *
 		DBClusterIdentifier     = "migrate-temp-" + replicationRequest.SourceDBName
 		VpcSecurityGroupIdsList []*string
 		LatestRestorableTime    = true
+		restoreType             = "copy-on-write"
 	)
 	for _, element := range dscrOutput.DBClusters[0].VpcSecurityGroups {
 		VpcSecurityGroupIdsList = append(VpcSecurityGroupIdsList, element.VpcSecurityGroupId)
@@ -131,6 +132,7 @@ func RDSDescribeToStruct(replicationRequest dbs.ReplicationRequest, dscrOutput *
 		SourceDBClusterIdentifier:   &replicationRequest.SourceClusterID,
 		VpcSecurityGroupIds:         VpcSecurityGroupIdsList,
 		UseLatestRestorableTime:     &LatestRestorableTime,
+		RestoreType:                 &restoreType,
 	}
 }
 
@@ -180,10 +182,9 @@ func RDSWaitForAddress(awsSession *session.Session, instance *rds.CreateDBInstan
 		tries            = 0
 		describeInstance *rds.DescribeDBInstancesOutput
 	)
-	fmt.Println("in wait for address")
+
 	for tries < 36 {
 		describeInstance, err := rdsSvc.DescribeDBInstances(&instanceInput)
-		fmt.Println(describeInstance.DBInstances[0].Endpoint)
 		if err != nil {
 			return nil, errors.NewBadRequestError(fmt.Sprintf("failed to describe RDS instance: %s",
 				err.Error()))
@@ -196,10 +197,11 @@ func RDSWaitForAddress(awsSession *session.Session, instance *rds.CreateDBInstan
 			return nil, errors.NewBadRequestError(fmt.Sprintf("failed to retrieve RDS instance fqdn"))
 		}
 	}
-	fmt.Println(describeInstance.DBInstances[0].Endpoint.Address)
 	return describeInstance, nil
 }
 
+// RDSRestoreCluster performes point-in-time, copy-on-write cluster restore of the source cluster hosting
+// the db to be migrated, in order to retrieve dumps and binlog file location.
 func RDSRestoreCluster(awsSession *session.Session, input rds.RestoreDBClusterToPointInTimeInput) (*rds.RestoreDBClusterToPointInTimeOutput, *errors.DBErr) {
 	var rdsSvc = rds.New(awsSession)
 	DBClusterOutput, err := rdsSvc.RestoreDBClusterToPointInTime(&input)
@@ -210,6 +212,7 @@ func RDSRestoreCluster(awsSession *session.Session, input rds.RestoreDBClusterTo
 	return DBClusterOutput, nil
 }
 
+// RDSCreateInstance creates an RDS DB instance in the cluster that RDSRestoreCluster func created.
 func RDSCreateInstance(awsSession *session.Session, input rds.CreateDBInstanceInput) (*rds.CreateDBInstanceOutput, *errors.DBErr) {
 	var rdsSvc = rds.New(awsSession)
 	DBInstanceOutput, err := rdsSvc.CreateDBInstance(&input)
@@ -220,6 +223,7 @@ func RDSCreateInstance(awsSession *session.Session, input rds.CreateDBInstanceIn
 	return DBInstanceOutput, nil
 }
 
+// RDSWaitUntilInstanceAvailable checks when DB instance that RDSCreateInstance created is ready for connections.
 func RDSWaitUntilInstanceAvailable(awsSession *session.Session, dbInstanceOutput *rds.CreateDBInstanceOutput) *errors.DBErr {
 	var (
 		rdsSvc = rds.New(awsSession)
@@ -227,7 +231,6 @@ func RDSWaitUntilInstanceAvailable(awsSession *session.Session, dbInstanceOutput
 			DBInstanceIdentifier: dbInstanceOutput.DBInstance.DBInstanceIdentifier,
 		}
 	)
-	fmt.Println("in wait function")
 	ctx, _ := context.WithTimeout(context.Background(), time.Duration(7200)*time.Second)
 	if err := rdsSvc.WaitUntilDBInstanceAvailableWithContext(ctx, &input); err != nil {
 		return errors.NewInternalServerError(fmt.Sprintf("RDS instance did not become available in a timely manner: %s",
@@ -236,6 +239,7 @@ func RDSWaitUntilInstanceAvailable(awsSession *session.Session, dbInstanceOutput
 	return nil
 }
 
+// RDSDescribeEvents pulls RDS DB Instance logs in order to find binlog file location and position.
 func RDSDescribeEvents(awsSession *session.Session, instance *rds.CreateDBInstanceOutput) (binLogFile *string, binLogPos *string, err *errors.DBErr) {
 	var (
 		rdsSvc           = rds.New(awsSession)

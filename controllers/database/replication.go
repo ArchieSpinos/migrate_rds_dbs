@@ -1,7 +1,6 @@
 package database
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/ArchieSpinos/migrate_rds_dbs/awsresources"
@@ -28,9 +27,6 @@ func SetupRepl(c *gin.Context) {
 		return
 	}
 
-	fmt.Println(serviceDBsSource)
-	fmt.Println(serviceDBsDest)
-
 	if err := persist.CreatePath(pathGlobal); err != nil {
 		c.JSON(err.Status, err)
 		return
@@ -46,7 +42,7 @@ func SetupRepl(c *gin.Context) {
 		return
 	}
 
-	awsSession, err := awsresources.CreateSession()
+	awsSession, err := awsresources.CreateSession(replicationRequest.AwsRegion, replicationRequest.AwsProfile)
 	if err != nil {
 		c.JSON(err.Status, err)
 		return

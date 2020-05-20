@@ -11,6 +11,8 @@ import (
 	"github.com/aws/aws-sdk-go/service/rds"
 )
 
+// SlicePointerToSlice accepts a pointer to slice and returns a slice
+// with same data.
 func SlicePointerToSlice(input *[]string) []string {
 	output := append([]string{}, *input...)
 	return output
@@ -83,14 +85,14 @@ func CleanUpDBs(request dbs.ReplicationRequest, serviceDBsDest []string) *errors
 			} else if (v != k) && (i < len(serviceDBsDest)-1) {
 				continue
 			} else {
-				tobeRemovedDBs = append(tobeRemovedDBs)
+				tobeRemovedDBs = append(tobeRemovedDBs, v)
 			}
 		}
 	}
 
 	for _, db := range tobeRemovedDBs {
 		result := &dbs.QueryResult{}
-		dropDBQuery = "drop database" + db + ";"
+		dropDBQuery = "drop database " + db + ";"
 		if err := result.MultiQuery(request, dropDBQuery, false); err != nil {
 			return err
 		}

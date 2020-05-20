@@ -10,6 +10,8 @@ import (
 	"github.com/ArchieSpinos/migrate_rds_dbs/utils/errors"
 )
 
+// CheckSlaveStatus checks that slace in mysql transactional replication
+// has caught up with master after initial restore.
 func CheckSlaveStatus(request dbs.ReplicationRequest) ([]string, *errors.DBErr) {
 	var (
 		out                   bytes.Buffer
